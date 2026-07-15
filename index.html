@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Tesla Battery Health</title>
-<meta name="description" content="3D visualisation of Tesla battery degradation from a Tessie battery-health CSV export.">
+<meta name="description" content="Interactive visualisation of Tesla battery degradation from a Tessie battery-health CSV export.">
 <style>
   :root {
     color-scheme: dark;
@@ -16,6 +16,10 @@
     --text-muted:    #8a8a92;
     --series:        #3987e5;
     --series-light:  #86b6ef;
+    --dot:           #6da7ec;
+    --grid:          #202027;
+    --baseline:      #2e2e36;
+    --crosshair:     #45454e;
     --delta-bad:     #e66767;
     --delta-good:    #35b46f;
     --font: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -23,38 +27,20 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body {
-    background: var(--bg);
+    background: radial-gradient(120% 90% at 50% 0%, #131319 0%, var(--bg) 55%, #0a0a0c 100%);
     color: var(--text-primary);
     font-family: var(--font);
     -webkit-font-smoothing: antialiased;
   }
-  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
-  .axis-label {
-    position: absolute; top: 0; left: 0;
-    font-size: 11px; letter-spacing: 0.04em;
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-    will-change: transform;
-  }
-  .axis-label.proj { color: var(--text-muted); font-style: italic; opacity: 0.9; }
-  .axis-label.ann {
-    color: var(--text-secondary); font-weight: 550;
-    text-shadow: 0 1px 10px rgba(0,0,0,0.9);
-    transition: opacity .35s;
-  }
+  #app { height: 100dvh; display: flex; flex-direction: column; }
 
-  /* ---------- HUD ---------- */
-  #hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+  /* ---------- header ---------- */
   header {
     display: flex; align-items: flex-start; justify-content: space-between;
-    padding: 20px 24px 0;
+    padding: 20px 24px 8px;
     gap: 16px; flex-wrap: wrap;
   }
-  .brand h1 {
-    font-size: 15px; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase;
-  }
+  .brand h1 { font-size: 15px; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; }
   .brand .sub {
     margin-top: 5px; font-size: 12px; color: var(--text-muted); letter-spacing: 0.02em;
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -65,7 +51,7 @@
     padding: 2px 7px; font-size: 11px; color: var(--text-secondary);
     background: var(--surface);
   }
-  .controls { display: flex; gap: 10px; pointer-events: auto; align-items: center; }
+  .controls { display: flex; gap: 10px; align-items: center; }
   .seg {
     display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     background: var(--surface); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -86,11 +72,24 @@
   }
   .btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
 
-  /* ---------- Stats ---------- */
-  .bottom { padding: 0 24px 18px; }
+  /* ---------- chart ---------- */
+  #chart-wrap { flex: 1; min-height: 0; padding: 4px 10px 0; }
+  #chart { width: 100%; height: 100%; display: block; }
+  #chart text { font-family: var(--font); }
+  .tick-label { fill: var(--text-muted); font-size: 11px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+  .ann-label  { fill: var(--text-secondary); font-size: 11px; font-weight: 570; letter-spacing: 0.02em; }
+  .end-label  { fill: var(--text-primary); font-size: 15px; font-weight: 650; }
+  .trend-label{ fill: var(--text-muted); font-size: 11px; font-style: italic; }
+  .gridline   { stroke: var(--grid); stroke-width: 1; }
+  .baseline-l { stroke: var(--baseline); stroke-width: 1; }
+  .ann-leader { stroke: var(--series-light); stroke-opacity: 0.45; stroke-width: 1; }
+  .crosshair-l{ stroke: var(--crosshair); stroke-width: 1; }
+
+  /* ---------- stats ---------- */
+  .bottom { padding: 4px 24px 18px; }
   .tiles {
     display: flex; gap: 10px; align-items: stretch;
-    overflow-x: auto; scrollbar-width: none; pointer-events: auto;
+    overflow-x: auto; scrollbar-width: none;
     padding-bottom: 2px;
   }
   .tiles::-webkit-scrollbar { display: none; }
@@ -116,10 +115,10 @@
   .hint span::before { content: "·"; margin-right: 14px; color: rgba(255,255,255,0.2); }
   .hint span:first-child::before { content: none; margin: 0; }
 
-  /* ---------- Tooltip ---------- */
+  /* ---------- tooltip ---------- */
   #tooltip {
     position: fixed; top: 0; left: 0; pointer-events: none;
-    background: rgba(15, 15, 20, 0.88);
+    background: rgba(15, 15, 20, 0.9);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px; font-size: 12px; min-width: 168px;
@@ -132,7 +131,7 @@
   #tooltip .tt-row b { color: var(--text-secondary); font-weight: 520; font-variant-numeric: tabular-nums; }
   #tooltip .tt-health b { color: var(--text-primary); }
 
-  /* ---------- Drop overlay ---------- */
+  /* ---------- drop / toast ---------- */
   #drop {
     position: fixed; inset: 0; z-index: 20; display: none;
     align-items: center; justify-content: center;
@@ -152,8 +151,8 @@
   #toast.on { opacity: 1; }
 
   @media (max-width: 700px) {
-    header { padding: 14px 14px 0; }
-    .bottom { padding: 0 14px 12px; }
+    header { padding: 14px 14px 4px; }
+    .bottom { padding: 4px 14px 12px; }
     .tile.hero .value { font-size: 30px; }
     .hint span:nth-child(n+2) { display: none; }
   }
@@ -161,10 +160,7 @@
 </head>
 <body>
 
-<canvas id="scene"></canvas>
-<div id="labels"></div>
-
-<div id="hud">
+<div id="app">
   <header>
     <div class="brand">
       <h1>Tesla Battery Health</h1>
@@ -187,11 +183,15 @@
     </div>
   </header>
 
+  <div id="chart-wrap">
+    <svg id="chart" role="img" aria-label="Battery usable capacity over distance or time"></svg>
+  </div>
+
   <div class="bottom">
     <div class="tiles" id="tiles"></div>
     <div class="hint">
       <span>Drag &amp; drop a Tessie battery CSV anywhere</span>
-      <span>Hover points for detail</span>
+      <span>Hover the chart for detail</span>
     </div>
   </div>
 </div>
@@ -497,22 +497,8 @@
 "2026-06-12 06:43:34","31398.00","308.97","215.52","67.85"
 </script>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-  }
-}
-</script>
-
-<script type="module">
-import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script>
 /* ================= data ================= */
 
 function parseCSV(text) {
@@ -611,98 +597,6 @@ const fmtDate = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short
 const fmtMonth = new Intl.DateTimeFormat('en-US', { month: 'short' });
 const kFmt = v => v >= 10000 ? (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k' : fmtInt.format(v);
 
-/* ================= three.js scaffolding ================= */
-
-const LEN = 110, HEIGHT = 26, WALL_Z = -2.2, FLOOR_FRONT = 4;
-const C = {
-  bg: 0x0d0d10,
-  series: new THREE.Color('#3987e5'),
-  seriesLight: new THREE.Color('#86b6ef'),
-  end: new THREE.Color('#cde2fb'),
-  point: new THREE.Color('#6da7ec'),
-  grid: new THREE.Color('#26262c'),
-  gridBright: new THREE.Color('#33333b'),
-  proj: new THREE.Color('#8a8a92'),
-  star: new THREE.Color('#46557a'),
-};
-
-const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(C.bg);
-scene.fog = new THREE.Fog(C.bg, 110, 260);
-
-const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
-const CAM_TARGET = new THREE.Vector3(LEN / 2, HEIGHT * 0.38, 0);
-const CAM_DIR = new THREE.Vector3(0.08, 0.26, 0.96).normalize();
-const CAM_FROM = new THREE.Vector3();
-const CAM_TO = new THREE.Vector3();
-function fitCamera() {
-  // distance that fits the full chart width for the current aspect ratio
-  const halfFovTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const dist = THREE.MathUtils.clamp((LEN * 0.62) / (halfFovTan * camera.aspect), 66, 260);
-  CAM_TO.copy(CAM_TARGET).addScaledVector(CAM_DIR, dist);
-  CAM_FROM.copy(CAM_TARGET).addScaledVector(CAM_DIR, dist * 1.5).add(new THREE.Vector3(30, 42, 0));
-}
-
-
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.55, 0.28);
-composer.addPass(bloom);
-composer.addPass(new OutputPass());
-
-function resize() {
-  const w = window.innerWidth, h = window.innerHeight;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(w, h, false);
-  composer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  fitCamera();
-}
-window.addEventListener('resize', resize);
-resize();
-camera.position.copy(CAM_FROM);
-camera.lookAt(CAM_TARGET);
-
-/* starfield */
-{
-  const n = 700, pos = new Float32Array(n * 3);
-  let seed = 42;
-  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < n; i++) {
-    const r = 140 + rnd() * 160, th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1);
-    pos[i * 3] = LEN / 2 + r * Math.sin(ph) * Math.cos(th);
-    pos[i * 3 + 1] = Math.abs(r * Math.cos(ph)) * 0.7 - 12;
-    pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({
-    color: C.star, size: 0.9, sizeAttenuation: true, transparent: true, opacity: 0.55, fog: false,
-  })));
-}
-
-/* ================= chart construction ================= */
-
-const labelsEl = document.getElementById('labels');
-const worldLabels = [];   // { pos: Vector3, el }
-
-function addLabel(text, pos, cls = '', anchor = '-50%,-50%') {
-  const el = document.createElement('div');
-  el.className = 'axis-label' + (cls ? ' ' + cls : '');
-  el.textContent = text;
-  labelsEl.appendChild(el);
-  worldLabels.push({ pos, el, anchor });
-}
-
-let state = null;  // { rows, unit, stats, mode, group, pointMeshData, tube, curtainMat, ... }
-let progress = 0, progressStart = 0;
-const clock = new THREE.Clock();
-
 function niceTicks(min, max, target, steps = [1, 2, 2.5, 5, 10]) {
   const span = max - min;
   const mag = Math.pow(10, Math.floor(Math.log10(span / target)));
@@ -713,41 +607,64 @@ function niceTicks(min, max, target, steps = [1, 2, 2.5, 5, 10]) {
   return ticks;
 }
 
-function buildChart(rows, unit, stats, mode) {
-  // clear previous
-  if (state?.group) {
-    state.group.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); });
-    scene.remove(state.group);
-  }
-  worldLabels.length = 0;
-  labelsEl.innerHTML = '';
+/* ================= chart (pure SVG) ================= */
 
-  const group = new THREE.Group();
+const svg = document.getElementById('chart');
+const wrap = document.getElementById('chart-wrap');
+const R = v => Math.round(v * 100) / 100;
+
+function smoothPathD(p) {
+  if (p.length < 3) return 'M' + p.map(q => `${R(q.x)},${R(q.y)}`).join('L');
+  let d = `M${R(p[0].x)},${R(p[0].y)}`;
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[Math.max(0, i - 1)], p1 = p[i], p2 = p[i + 1], p3 = p[Math.min(p.length - 1, i + 2)];
+    d += `C${R(p1.x + (p2.x - p0.x) / 6)},${R(p1.y + (p2.y - p0.y) / 6)},` +
+         `${R(p2.x - (p3.x - p1.x) / 6)},${R(p2.y - (p3.y - p1.y) / 6)},${R(p2.x)},${R(p2.y)}`;
+  }
+  return d;
+}
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+let chart = null;   // { pts, rows, unit, stats, mode, plot, introTl }
+
+function renderChart(rows, unit, stats, mode, anim) {
+  const W = wrap.clientWidth - 0, H = wrap.clientHeight - 0;
+  if (W < 60 || H < 60) return;
+  const prev = chart;
+  chart?.introTl?.kill();
+  gsap.killTweensOf('#chart *');
+
+  const Mg = { l: 58, r: 74, t: 44, b: 30 };
+  const plotW = W - Mg.l - Mg.r, plotH = H - Mg.t - Mg.b;
   const first = rows[0], last = rows[rows.length - 1];
 
-  // domains
   const capMin = Math.min(...rows.map(r => r.cap)), capMax = Math.max(...rows.map(r => r.cap));
   const yLo = Math.floor(capMin) - 0.6, yHi = Math.ceil(capMax) + 0.6;
   const projPad = mode === 'odo' ? (last.odo - first.odo) * 0.16 : 0;
   const x0 = mode === 'odo' ? first.odo : +first.date;
   const x1 = mode === 'odo' ? last.odo + projPad : +last.date;
-  const X = v => (v - x0) / (x1 - x0) * LEN;
-  const Y = c => (c - yLo) / (yHi - yLo) * HEIGHT;
+  const X = v => Mg.l + (v - x0) / (x1 - x0) * plotW;
+  const Y = c => Mg.t + (1 - (c - yLo) / (yHi - yLo)) * plotH;
   const xOf = r => mode === 'odo' ? r.odo : +r.date;
+  const baseY = Mg.t + plotH;
 
-  /* ----- grid: horizontal capacity lines on a back plane, ticks on the floor ----- */
-  const gridVerts = [];
+  const pts = rows.map((r, i) => ({ x: X(xOf(r)), ySm: Y(stats.smooth[i]), yRaw: Y(r.cap) }));
+  const smPts = pts.map(p => ({ x: p.x, y: p.ySm }));
+  const lineD = smoothPathD(smPts);
+  const areaD = `${lineD}L${R(smPts[smPts.length - 1].x)},${R(baseY)}L${R(smPts[0].x)},${R(baseY)}Z`;
+
+  /* ----- axes ----- */
+  let axes = '';
   const yTicks = niceTicks(yLo, yHi, 4, [1, 2, 5]).filter(v => v > yLo + 0.15 && v < yHi - 0.15);
   for (const v of yTicks) {
-    const y = Y(v);
-    gridVerts.push(0, y, WALL_Z, LEN, y, WALL_Z);
-    addLabel(`${fmtInt.format(v)} kWh`, new THREE.Vector3(-1.8, y, WALL_Z), '', '-100%,-50%');
+    const y = R(Y(v));
+    axes += `<line class="gridline" x1="${Mg.l}" y1="${y}" x2="${Mg.l + plotW}" y2="${y}"/>` +
+      `<text class="tick-label" x="${Mg.l - 10}" y="${y + 3.5}" text-anchor="end">${v} kWh</text>`;
   }
-  let xTickVals;
+  let xTickVals = [];
   if (mode === 'odo') {
     xTickVals = niceTicks(first.odo, last.odo, 6).map(v => ({ v, t: kFmt(Math.round(v)) + ' ' + unit }));
   } else {
-    xTickVals = [];
     const d = new Date(first.date); d.setDate(1); d.setMonth(d.getMonth() + 1);
     const spanM = (last.date - first.date) / (1000 * 3600 * 24 * 30.44);
     const stepM = Math.max(1, Math.round(spanM / 7));
@@ -756,163 +673,148 @@ function buildChart(rows, unit, stats, mode) {
     }
   }
   for (const { v, t } of xTickVals) {
-    const x = X(v);
-    gridVerts.push(x, 0, WALL_Z, x, 0, FLOOR_FRONT);
-    addLabel(t, new THREE.Vector3(x, -1.1, FLOOR_FRONT + 0.5));
+    const x = R(X(v));
+    axes += `<line class="gridline" x1="${x}" y1="${baseY}" x2="${x}" y2="${baseY + 5}"/>` +
+      `<text class="tick-label" x="${x}" y="${baseY + 19}" text-anchor="middle">${t}</text>`;
   }
-  const gridGeo = new THREE.BufferGeometry();
-  gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridVerts, 3));
-  group.add(new THREE.LineSegments(gridGeo, new THREE.LineBasicMaterial({ color: C.grid, transparent: true, opacity: 0.85 })));
+  axes += `<line class="baseline-l" x1="${Mg.l}" y1="${baseY}" x2="${Mg.l + plotW}" y2="${baseY}"/>`;
 
-  // baseline (floor edge) — slightly brighter
-  const baseGeo = new THREE.BufferGeometry();
-  baseGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, WALL_Z, 0, 0, FLOOR_FRONT, LEN, 0, WALL_Z, LEN, 0, FLOOR_FRONT, 0, 0, 0, LEN, 0, 0], 3));
-  group.add(new THREE.LineSegments(baseGeo, new THREE.LineBasicMaterial({ color: C.gridBright })));
-
-  /* ----- smoothed capacity curve → glowing tube ----- */
-  const pts = rows.map((r, i) => new THREE.Vector3(X(xOf(r)), Y(stats.smooth[i]), 0));
-  const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
-  const SEGS = 480;
-  const tubeGeo = new THREE.TubeGeometry(curve, SEGS, 0.19, 10, false);
-  const vCount = tubeGeo.attributes.position.count;
-  const colors = new Float32Array(vCount * 3);
-  const cA = C.seriesLight, cB = C.series, tmp = new THREE.Color();
-  const perRing = vCount / (SEGS + 1);
-  for (let i = 0; i < vCount; i++) {
-    const t = Math.floor(i / perRing) / SEGS;
-    tmp.copy(cA).lerp(cB, Math.pow(t, 0.8)).multiplyScalar(1.25);
-    colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
-  }
-  tubeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const tube = new THREE.Mesh(tubeGeo, new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }));
-  group.add(tube);
-
-  /* ----- gradient curtain under the curve ----- */
-  const n = rows.length;
-  const cPos = new Float32Array(n * 2 * 3), cUV = new Float32Array(n * 2 * 2);
-  for (let i = 0; i < n; i++) {
-    const p = pts[i], u = i / (n - 1);
-    cPos.set([p.x, p.y, 0, p.x, 0, 0], i * 6);
-    cUV.set([u, 1, u, 0], i * 4);
-  }
-  const cIdx = [];
-  for (let i = 0; i < n - 1; i++) {
-    const a = i * 2, b = i * 2 + 1, c2 = i * 2 + 2, d = i * 2 + 3;
-    cIdx.push(a, b, c2, b, d, c2);
-  }
-  const curtainGeo = new THREE.BufferGeometry();
-  curtainGeo.setAttribute('position', new THREE.BufferAttribute(cPos, 3));
-  curtainGeo.setAttribute('uv', new THREE.BufferAttribute(cUV, 2));
-  curtainGeo.setIndex(cIdx);
-  const curtainMat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uColor: { value: C.series }, uProgress: { value: 0 } },
-    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `
-      uniform vec3 uColor; uniform float uProgress; varying vec2 vUv;
-      void main(){
-        if (vUv.x > uProgress) discard;
-        float a = pow(vUv.y, 1.6) * 0.30;
-        gl_FragColor = vec4(uColor, a);
-      }`,
-  });
-  group.add(new THREE.Mesh(curtainGeo, curtainMat));
-
-  /* ----- raw readings as instanced dots ----- */
-  const dotGeo = new THREE.SphereGeometry(0.14, 10, 8);
-  const dots = new THREE.InstancedMesh(dotGeo, new THREE.MeshBasicMaterial({
-    color: C.point, transparent: true, opacity: 0.8, toneMapped: false,
-  }), n);
-  const dotPts = rows.map((r) => new THREE.Vector3(X(xOf(r)), Y(r.cap), 0));
-  const m4 = new THREE.Matrix4();
-  for (let i = 0; i < n; i++) { m4.makeScale(0.0001, 0.0001, 0.0001).setPosition(dotPts[i]); dots.setMatrixAt(i, m4); }
-  group.add(dots);
-
-  /* ----- projection (odometer mode) ----- */
+  /* ----- trend projection ----- */
+  let proj = '';
   if (mode === 'odo' && projPad > 0) {
-    const lastP = pts[n - 1];
-    const capProj = stats.reg.a + stats.reg.b * (last.odo + projPad);
-    const projGeo = new THREE.BufferGeometry().setFromPoints([
-      lastP, new THREE.Vector3(LEN, Y(capProj), 0),
-    ]);
-    const projLine = new THREE.Line(projGeo, new THREE.LineDashedMaterial({
-      color: C.proj, dashSize: 0.9, gapSize: 0.7, transparent: true, opacity: 0.7,
-    }));
-    projLine.computeLineDistances();
-    group.add(projLine);
-    addLabel('trend →', new THREE.Vector3(LEN + 0.8, Y(capProj), 0), 'proj', '0%,-50%');
+    const yP = R(Y(stats.reg.a + stats.reg.b * (last.odo + projPad)));
+    const pLast = smPts[smPts.length - 1];
+    proj = `<line x1="${R(pLast.x)}" y1="${R(pLast.y)}" x2="${Mg.l + plotW}" y2="${yP}"
+      stroke="var(--text-muted)" stroke-opacity="0.6" stroke-width="1" stroke-dasharray="5 4"/>
+      <text class="trend-label" x="${Mg.l + plotW + 6}" y="${yP + 3.5}">trend</text>`;
   }
 
-  /* ----- "now" marker ----- */
-  const endP = pts[n - 1];
-  const endDot = new THREE.Mesh(new THREE.SphereGeometry(0.42, 20, 14),
-    new THREE.MeshBasicMaterial({ color: C.end, toneMapped: false }));
-  endDot.position.copy(endP);
-  group.add(endDot);
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.42, 20, 14),
-    new THREE.MeshBasicMaterial({ color: C.series, transparent: true, opacity: 0.25, toneMapped: false }));
-  halo.position.copy(endP);
-  group.add(halo);
-  addLabel(`${stats.healthPct.toFixed(1)}%`, endP.clone().add(new THREE.Vector3(0, 1.9, 0)), '');
-  worldLabels[worldLabels.length - 1].el.style.cssText = 'color:var(--text-primary);font-weight:640;font-size:14px;';
+  /* ----- dots ----- */
+  const dots = pts.map(p =>
+    `<circle class="dot" cx="${R(p.x)}" cy="${R(p.yRaw)}" r="2" fill="var(--dot)" fill-opacity="0.75"/>`).join('');
 
-  /* ----- 3D annotations: peak & outliers lift out of the chart plane ----- */
-  const annotations = [];
-  function annotate(point, text, lift, main) {
-    const top = point.clone().setZ(lift);
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([point, top]),
-      new THREE.LineBasicMaterial({ color: C.seriesLight, transparent: true, opacity: 0.4 }));
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(main ? 0.22 : 0.16, 12, 8),
-      new THREE.MeshBasicMaterial({ color: main ? C.end : C.seriesLight, toneMapped: false }));
-    dot.position.copy(top);
-    line.visible = dot.visible = false;
-    group.add(line, dot);
-    addLabel(text, top.clone().add(new THREE.Vector3(0, 1.0, 0)), 'ann', '-50%,-100%');
-    const el = worldLabels[worldLabels.length - 1].el;
-    el.style.opacity = '0';
-    annotations.push({ u: point.x / LEN, objs: [line, dot], el });
-  }
-
+  /* ----- annotations: peak & outliers ----- */
+  const annModels = [];
   const peakIdx = stats.smooth.indexOf(Math.max(...stats.smooth));
-  annotate(pts[peakIdx], `peak ${fmt1.format(stats.baseline)} kWh`, 7, true);
-
-  // outliers = raw readings furthest off the smoothed curve
+  annModels.push({ i: peakIdx, y: pts[peakIdx].ySm, up: true, main: true,
+    text: `peak ${fmt1.format(stats.baseline)} kWh` });
   const residuals = rows.map((r, i) => r.cap - stats.smooth[i]);
   const sd = Math.sqrt(residuals.reduce((s, v) => s + v * v, 0) / residuals.length);
   const thresh = Math.max(0.3, 2.4 * sd);
   const order = residuals.map((_, i) => i).sort((a, b) => Math.abs(residuals[b]) - Math.abs(residuals[a]));
-  const picked = [];
   for (const i of order) {
-    if (Math.abs(residuals[i]) < thresh || picked.length >= 3) break;
-    if ([peakIdx, ...picked].some(j => Math.abs(dotPts[i].x - dotPts[j].x) < LEN * 0.11)) continue;
-    picked.push(i);
-    annotate(dotPts[i],
-      `${residuals[i] > 0 ? '+' : '−'}${fmt1.format(Math.abs(residuals[i]))} kWh outlier`, 5, false);
+    if (Math.abs(residuals[i]) < thresh || annModels.length >= 4) break;
+    if (annModels.some(m => Math.abs(pts[i].x - pts[m.i].x) < 90)) continue;
+    annModels.push({ i, y: pts[i].yRaw, up: residuals[i] > 0, main: false,
+      text: `${residuals[i] > 0 ? '+' : '−'}${fmt1.format(Math.abs(residuals[i]))} kWh outlier` });
+  }
+  let anns = '';
+  for (const m of annModels) {
+    const p = pts[m.i], len = m.main ? 34 : 26;
+    const yEnd = m.up ? m.y - len : m.y + len;
+    const tx = Math.min(Math.max(p.x, Mg.l + 40), Mg.l + plotW - 46);
+    anns += `<g class="ann">
+      <line class="ann-leader" x1="${R(p.x)}" y1="${R(m.up ? m.y - 5 : m.y + 5)}" x2="${R(p.x)}" y2="${R(yEnd)}"/>
+      <circle cx="${R(p.x)}" cy="${R(m.y)}" r="3.4" fill="none" stroke="var(--series-light)" stroke-width="1.2"/>
+      <text class="ann-label" x="${R(tx)}" y="${R(m.up ? yEnd - 5 : yEnd + 13)}" text-anchor="middle">${esc(m.text)}</text>
+    </g>`;
   }
 
-  // hover highlight
-  const hover = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
-  hover.visible = false;
-  group.add(hover);
+  /* ----- end marker ----- */
+  const pe = pts[pts.length - 1];
+  const endG = `<g class="endg">
+    <circle id="end-halo" cx="${R(pe.x)}" cy="${R(pe.ySm)}" r="5" fill="none" stroke="var(--series)" stroke-width="1.5"/>
+    <circle cx="${R(pe.x)}" cy="${R(pe.ySm)}" r="4" fill="#cde2fb" stroke="var(--bg)" stroke-width="1.5"/>
+    <text class="end-label" x="${R(pe.x)}" y="${R(pe.ySm - 14)}" text-anchor="middle">${stats.healthPct.toFixed(1)}%</text>
+  </g>`;
 
-  scene.add(group);
-  state = {
-    rows, unit, stats, mode, group, tube, curtainMat, dots, dotPts, endDot, halo, hover, annotations,
-    idxTotal: tubeGeo.index.count,
-    dotU: rows.map((r) => (X(xOf(r))) / LEN),
-    endU: X(xOf(last)) / LEN,
-  };
-  progress = 0;
-  progressStart = clock.getElapsedTime();
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="strokeGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="var(--series-light)"/>
+        <stop offset="1" stop-color="var(--series)"/>
+      </linearGradient>
+      <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="var(--series)" stop-opacity="0.22"/>
+        <stop offset="1" stop-color="var(--series)" stop-opacity="0"/>
+      </linearGradient>
+      <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="5"/>
+      </filter>
+      <clipPath id="sweep"><rect id="sweep-rect" x="${Mg.l - 4}" y="0" width="${plotW + 12}" height="${H}"/></clipPath>
+    </defs>
+    <g id="g-axes">${axes}</g>
+    <g clip-path="url(#sweep)">
+      <path id="area" d="${areaD}" fill="url(#areaGrad)"/>
+      <path id="line-glow" d="${lineD}" fill="none" stroke="var(--series)" stroke-width="5"
+        stroke-opacity="0.45" filter="url(#glow)"/>
+      <path id="line" d="${lineD}" fill="none" stroke="url(#strokeGrad)" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+      <g id="g-dots">${dots}</g>
+    </g>
+    <g id="g-proj">${proj}</g>
+    <g id="g-anns">${anns}</g>
+    ${endG}
+    <g id="g-hover" style="visibility:hidden">
+      <line id="hover-line" class="crosshair-l" y1="${Mg.t}" y2="${baseY}"/>
+      <circle id="hover-dot" r="4.5" fill="#fff" stroke="var(--bg)" stroke-width="1.5"/>
+    </g>`;
+
+  chart = { pts, rows, unit, stats, mode, plot: { Mg, plotW, plotH, baseY, W, H } };
+
+  /* ----- halo pulse (always running) ----- */
+  gsap.fromTo('#end-halo', { attr: { r: 5 }, opacity: 0.8 },
+    { attr: { r: 16 }, opacity: 0, duration: 1.8, ease: 'power1.out', repeat: -1, repeatDelay: 0.4 });
+
+  /* ----- entrance animations ----- */
+  if (anim === 'sweep') {
+    const lineEl = svg.querySelector('#line');
+    const len = lineEl.getTotalLength();
+    const tl = gsap.timeline();
+    chart.introTl = tl;
+    tl.from('#g-axes', { opacity: 0, duration: 0.6, ease: 'none' }, 0)
+      .fromTo(['#line', '#line-glow'], { strokeDasharray: len, strokeDashoffset: len },
+        { strokeDashoffset: 0, duration: 1.7, ease: 'power2.inOut', clearProps: 'strokeDasharray,strokeDashoffset' }, 0.15)
+      .fromTo('#sweep-rect', { attr: { width: 0 } },
+        { attr: { width: plotW + 12 }, duration: 1.7, ease: 'power2.inOut' }, 0.15)
+      .from('#area', { opacity: 0, duration: 0.6, ease: 'none' }, 0.3);
+    for (const [k, m] of annModels.entries()) {
+      const frac = (pts[m.i].x - Mg.l) / plotW;
+      tl.from(svg.querySelectorAll('.ann')[k], { opacity: 0, y: m.up ? 8 : -8, duration: 0.5, ease: 'power2.out' },
+        0.25 + 1.6 * frac);
+    }
+    tl.from('.endg', { opacity: 0, duration: 0.4 }, 1.75)
+      .from('#g-proj', { opacity: 0, duration: 0.6 }, 1.85);
+  } else if (anim === 'morph' && prev && prev.pts.length === pts.length) {
+    const from = prev.pts, to = pts;
+    const lineEl = svg.querySelector('#line'), glowEl = svg.querySelector('#line-glow'),
+      areaEl = svg.querySelector('#area'), dotEls = svg.querySelectorAll('.dot');
+    const prox = { k: 0 };
+    gsap.to(prox, {
+      k: 1, duration: 0.9, ease: 'power3.inOut',
+      onUpdate() {
+        const k = prox.k;
+        const ip = to.map((p, i) => ({
+          x: from[i].x + (p.x - from[i].x) * k,
+          ySm: from[i].ySm + (p.ySm - from[i].ySm) * k,
+          yRaw: from[i].yRaw + (p.yRaw - from[i].yRaw) * k,
+        }));
+        const d = smoothPathD(ip.map(p => ({ x: p.x, y: p.ySm })));
+        lineEl.setAttribute('d', d);
+        glowEl.setAttribute('d', d);
+        areaEl.setAttribute('d', `${d}L${R(ip[ip.length - 1].x)},${R(baseY)}L${R(ip[0].x)},${R(baseY)}Z`);
+        dotEls.forEach((c, i) => { c.setAttribute('cx', R(ip[i].x)); c.setAttribute('cy', R(ip[i].yRaw)); });
+      },
+    });
+    gsap.from(['#g-axes', '#g-anns', '#g-proj', '.endg'], { opacity: 0, duration: 0.55, ease: 'none', delay: 0.35 });
+  }
 }
 
 /* ================= HUD ================= */
 
-function deltaSpan(v, unitStr, invertGood = false) {
-  const good = invertGood ? v < 0 : v > 0;
-  const cls = v === 0 ? '' : good ? 'pos' : 'neg';
+function deltaSpan(v, unitStr) {
+  const cls = v === 0 ? '' : v > 0 ? 'pos' : 'neg';
   const sign = v > 0 ? '+' : '−';
   return `<span class="${cls}">${sign}${fmt1.format(Math.abs(v))}${unitStr}</span>`;
 }
@@ -961,136 +863,69 @@ function renderStats(rows, unit, stats, vin, mode) {
     </div>`).join('');
 }
 
-/* ================= interaction ================= */
+/* ================= hover ================= */
 
 const tooltip = document.getElementById('tooltip');
-const ptr = { x: -1e4, y: -1e4, inside: false };
-const parallax = { x: 0, y: 0 };
-canvas.addEventListener('pointermove', (e) => { ptr.x = e.clientX; ptr.y = e.clientY; ptr.inside = true; });
-canvas.addEventListener('pointerleave', () => { ptr.inside = false; });
+const hoverG = () => svg.querySelector('#g-hover');
 
-const projV = new THREE.Vector3();
-function updateHover() {
-  if (!state || !ptr.inside || progress < 1) { tooltip.classList.remove('on'); if (state) state.hover.visible = false; return; }
-  const { rows, dotPts, hover, unit, stats } = state;
-  const w = window.innerWidth, h = window.innerHeight;
-  let best = -1, bestD = 26 * 26;
-  for (let i = 0; i < dotPts.length; i++) {
-    projV.copy(dotPts[i]).project(camera);
-    if (projV.z > 1) continue;
-    const sx = (projV.x * 0.5 + 0.5) * w, sy = (-projV.y * 0.5 + 0.5) * h;
-    const d = (sx - ptr.x) ** 2 + (sy - ptr.y) ** 2;
+svg.addEventListener('pointermove', (e) => {
+  if (!chart) return;
+  const { pts, rows, unit, stats, plot } = chart;
+  const rect = svg.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (mx < plot.Mg.l - 8 || mx > plot.Mg.l + plot.plotW + 8 || my < plot.Mg.t - 8 || my > plot.baseY + 8) {
+    hideHover(); return;
+  }
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.abs(pts[i].x - mx);
     if (d < bestD) { bestD = d; best = i; }
   }
-  if (best < 0) { tooltip.classList.remove('on'); hover.visible = false; return; }
-  const r = rows[best];
-  hover.position.copy(dotPts[best]);
-  hover.visible = true;
+  const p = pts[best], r = rows[best];
+  const g = hoverG();
+  g.style.visibility = 'visible';
+  const hl = g.querySelector('#hover-line'), hd = g.querySelector('#hover-dot');
+  hl.setAttribute('x1', R(p.x)); hl.setAttribute('x2', R(p.x));
+  hd.setAttribute('cx', R(p.x)); hd.setAttribute('cy', R(p.yRaw));
   tooltip.innerHTML = `
     <div class="tt-date">${fmtDate.format(r.date)}</div>
     <div class="tt-row tt-health"><span>Health</span><b>${(r.cap / stats.baseline * 100).toFixed(1)}%</b></div>
     <div class="tt-row"><span>Capacity</span><b>${fmt1.format(r.cap)} kWh</b></div>
     ${isFinite(r.range) && r.range > 0 ? `<div class="tt-row"><span>Max range</span><b>${Math.round(r.range)} ${unit}</b></div>` : ''}
     <div class="tt-row"><span>Odometer</span><b>${fmtInt.format(Math.round(r.odo))} ${unit}</b></div>`;
-  const tx = Math.min(ptr.x + 18, w - 200), ty = Math.max(12, ptr.y - 30 - tooltip.offsetHeight * 0.0);
-  tooltip.style.transform = `translate(${tx}px, ${Math.min(ty, h - tooltip.offsetHeight - 12)}px)`;
-  tooltip.classList.add('on');
-}
-
-/* ================= render loop ================= */
-
-const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-const INTRO_S = 2.2, DRAW_S = 2.4;
-let introDone = false;
-
-function animate() {
-  requestAnimationFrame(animate);
-  const t = clock.getElapsedTime();
-
-  // camera intro
-  if (!introDone) {
-    const k = Math.min(1, t / INTRO_S);
-    camera.position.lerpVectors(CAM_FROM, CAM_TO, easeOutCubic(k));
-    camera.lookAt(CAM_TARGET);
-    if (k >= 1) introDone = true;
-  }
-
-  // flat front view: gentle drift + pointer parallax, no orbiting
-  if (introDone) {
-    const nx = ptr.inside ? (ptr.x / window.innerWidth - 0.5) * 2 : 0;
-    const ny = ptr.inside ? (ptr.y / window.innerHeight - 0.5) * 2 : 0;
-    parallax.x += (nx - parallax.x) * 0.035;
-    parallax.y += (ny - parallax.y) * 0.035;
-    camera.position.copy(CAM_TO);
-    camera.position.x += Math.sin(t * 0.16) * 0.8 + parallax.x * 2.6;
-    camera.position.y += Math.sin(t * 0.11) * 0.5 - parallax.y * 1.6;
-    camera.lookAt(CAM_TARGET);
-  }
-
-  if (state) {
-    // draw-in progress
-    const k = Math.min(1, (t - progressStart) / DRAW_S);
-    const p = easeOutCubic(k);
-    if (p !== progress || k < 1) {
-      progress = p;
-      const idx = Math.floor(state.idxTotal * Math.min(1, progress / Math.max(state.endU, 1e-6)) / 3) * 3;
-      state.tube.geometry.setDrawRange(0, Math.min(idx, state.idxTotal));
-      state.curtainMat.uniforms.uProgress.value = progress / Math.max(state.endU, 1e-6);
-      const m4 = new THREE.Matrix4();
-      for (let i = 0; i < state.dotPts.length; i++) {
-        const on = state.dotU[i] <= progress;
-        m4.makeScale(on ? 1 : 1e-4, on ? 1 : 1e-4, on ? 1 : 1e-4).setPosition(state.dotPts[i]);
-        state.dots.setMatrixAt(i, m4);
-      }
-      state.dots.instanceMatrix.needsUpdate = true;
-      const endOn = progress >= state.endU - 1e-3;
-      state.endDot.visible = endOn;
-      state.halo.visible = endOn;
-      for (const a of state.annotations) {
-        const on = progress >= a.u;
-        a.objs.forEach(o => { o.visible = on; });
-        a.el.style.opacity = on ? '1' : '0';
-      }
-    }
-    // pulse
-    const s = 1 + Math.sin(t * 2.2) * 0.5 + 0.5;
-    state.halo.scale.setScalar(1.4 + s * 1.1);
-    state.halo.material.opacity = 0.28 - s * 0.16;
-  }
-
-  composer.render();
-
-  // project HTML labels
   const w = window.innerWidth, h = window.innerHeight;
-  for (const { pos, el, anchor } of worldLabels) {
-    projV.copy(pos).project(camera);
-    if (projV.z > 1 || Math.abs(projV.x) > 1.2 || Math.abs(projV.y) > 1.2) { el.style.display = 'none'; continue; }
-    el.style.display = '';
-    el.style.transform = `translate(${anchor}) translate(${(projV.x * 0.5 + 0.5) * w}px, ${(-projV.y * 0.5 + 0.5) * h}px)`;
-  }
-  updateHover();
+  const tx = Math.min(e.clientX + 18, w - 200);
+  const ty = Math.min(Math.max(12, e.clientY - 40), h - tooltip.offsetHeight - 12);
+  tooltip.style.transform = `translate(${tx}px, ${ty}px)`;
+  tooltip.classList.add('on');
+});
+svg.addEventListener('pointerleave', hideHover);
+function hideHover() {
+  tooltip.classList.remove('on');
+  const g = hoverG();
+  if (g) g.style.visibility = 'hidden';
 }
-animate();
 
 /* ================= app wiring ================= */
 
 let native = null, currentVin = '', mode = 'odo', dispUnit = 'km';
 const KM_PER_MI = 1.609344;
 
-function refresh() {
+function refresh(anim = 'none') {
   if (!native) return;
   const f = native.unit === dispUnit ? 1 : (native.unit === 'mi' ? KM_PER_MI : 1 / KM_PER_MI);
   const rows = f === 1 ? native.rows
     : native.rows.map(r => ({ ...r, odo: r.odo * f, range: r.range * f }));
   const stats = analyse(rows);
   renderStats(rows, dispUnit, stats, currentVin, mode);
-  buildChart(rows, dispUnit, stats, mode);
+  renderChart(rows, dispUnit, stats, mode, anim);
 }
 
-function load(rows, unit, vin) {
+function load(rows, unit, vin, animateTiles = false) {
   native = { rows, unit };
   currentVin = vin;
-  refresh();
+  refresh('sweep');
+  if (animateTiles) gsap.from('.tile', { y: 14, opacity: 0, stagger: 0.06, duration: 0.5, ease: 'power2.out', delay: 0.2 });
 }
 
 const modeBtns = { odo: document.getElementById('mode-odo'), time: document.getElementById('mode-time') };
@@ -1099,7 +934,7 @@ function setMode(m) {
   mode = m;
   modeBtns.odo.setAttribute('aria-pressed', String(m === 'odo'));
   modeBtns.time.setAttribute('aria-pressed', String(m === 'time'));
-  refresh();
+  refresh('morph');
 }
 modeBtns.odo.addEventListener('click', () => setMode('odo'));
 modeBtns.time.addEventListener('click', () => setMode('time'));
@@ -1110,10 +945,16 @@ function setUnit(u) {
   dispUnit = u;
   unitBtns.km.setAttribute('aria-pressed', String(u === 'km'));
   unitBtns.mi.setAttribute('aria-pressed', String(u === 'mi'));
-  refresh();
+  refresh('none');
 }
 unitBtns.km.addEventListener('click', () => setUnit('km'));
 unitBtns.mi.addEventListener('click', () => setUnit('mi'));
+
+let resizeT = 0;
+new ResizeObserver(() => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => refresh('none'), 120);
+}).observe(wrap);
 
 const toast = document.getElementById('toast');
 let toastT = 0;
@@ -1158,7 +999,7 @@ window.addEventListener('drop', (e) => {
 /* boot with the embedded sample */
 {
   const parsed = parseCSV(document.getElementById('default-csv').textContent);
-  if (parsed) load(parsed.rows, parsed.unit, document.body.dataset.vin || 'LRW3F7EB4MCXXXXXX');
+  if (parsed) load(parsed.rows, parsed.unit, 'LRW3F7EB4MCXXXXXX', true);
 }
 </script>
 </body>

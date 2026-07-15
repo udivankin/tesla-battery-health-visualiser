@@ -1,24 +1,24 @@
 # Tesla Battery Health Visualiser
 
-An interactive 3D visualisation of Tesla battery degradation, built from a
+An interactive visualisation of Tesla battery degradation, built from a
 [Tessie](https://tessie.com) battery-health CSV export. Single self-contained
-HTML file rendered with [Three.js](https://threejs.org) (loaded from CDN).
+HTML file — pure SVG rendering, animated with [GSAP](https://gsap.com) (loaded
+from CDN).
 
 **Live:** https://udivankin.github.io/tesla-battery-health-visualiser/
 
 ## Features
 
-- Glowing 3D capacity curve (smoothed) with raw readings as points, drawn in
-  with an intro animation
+- Smoothed capacity curve with a soft glow and gradient, raw readings as dots,
+  drawn in with a sweep animation; switching axis modes morphs the curve
 - Battery health, usable capacity, max range, odometer and degradation-trend
   stat tiles computed from the data
 - Switch the x-axis between **odometer** and **time**
 - Distance unit toggle — **km (default) or mi** — converting from whichever
   unit the CSV was exported in
 - Dashed trend projection based on the most recent half of the mileage span
-- Hover any reading for date, health %, capacity, range and odometer
-- Flat front-on chart with pointer parallax; the third dimension is reserved
-  for annotation pins that lift the peak and outlier readings off the plane
+- Crosshair + tooltip on hover with date, health %, capacity, range and odometer
+- Peak and outlier readings called out with leader-line annotations
 - **Drag & drop your own Tessie CSV** (or use the Load CSV button) — everything
   recomputes client-side; no data leaves your browser
 
