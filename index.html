@@ -28,7 +28,7 @@
     font-family: var(--font);
     -webkit-font-smoothing: antialiased;
   }
-  #scene { position: fixed; inset: 0; display: block; }
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
   .axis-label {
     position: absolute; top: 0; left: 0;
@@ -174,6 +174,10 @@
       </div>
     </div>
     <div class="controls">
+      <div class="seg" role="group" aria-label="Distance unit">
+        <button id="unit-km" aria-pressed="true">km</button>
+        <button id="unit-mi" aria-pressed="false">mi</button>
+      </div>
       <div class="seg" role="group" aria-label="X axis">
         <button id="mode-odo" aria-pressed="true">Odometer</button>
         <button id="mode-time" aria-pressed="false">Time</button>
@@ -644,6 +648,7 @@ composer.addPass(new OutputPass());
 
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h, false);
   composer.setSize(w, h);
   camera.aspect = w / h;
@@ -1057,27 +1062,46 @@ animate();
 
 /* ================= app wiring ================= */
 
-let currentData = null, currentVin = '', mode = 'odo';
+let native = null, currentVin = '', mode = 'odo', dispUnit = 'km';
+const KM_PER_MI = 1.609344;
+
+function refresh() {
+  if (!native) return;
+  const f = native.unit === dispUnit ? 1 : (native.unit === 'mi' ? KM_PER_MI : 1 / KM_PER_MI);
+  const rows = f === 1 ? native.rows
+    : native.rows.map(r => ({ ...r, odo: r.odo * f, range: r.range * f }));
+  const stats = analyse(rows);
+  renderStats(rows, dispUnit, stats, currentVin);
+  buildChart(rows, dispUnit, stats, mode);
+}
 
 function load(rows, unit, vin) {
-  currentData = { rows, unit };
+  native = { rows, unit };
   currentVin = vin;
-  const stats = analyse(rows);
-  currentData.stats = stats;
-  renderStats(rows, unit, stats, vin);
-  buildChart(rows, unit, stats, mode);
+  refresh();
 }
 
 const modeBtns = { odo: document.getElementById('mode-odo'), time: document.getElementById('mode-time') };
 function setMode(m) {
-  if (m === mode || !currentData) return;
+  if (m === mode || !native) return;
   mode = m;
   modeBtns.odo.setAttribute('aria-pressed', String(m === 'odo'));
   modeBtns.time.setAttribute('aria-pressed', String(m === 'time'));
-  buildChart(currentData.rows, currentData.unit, currentData.stats, mode);
+  refresh();
 }
 modeBtns.odo.addEventListener('click', () => setMode('odo'));
 modeBtns.time.addEventListener('click', () => setMode('time'));
+
+const unitBtns = { km: document.getElementById('unit-km'), mi: document.getElementById('unit-mi') };
+function setUnit(u) {
+  if (u === dispUnit || !native) return;
+  dispUnit = u;
+  unitBtns.km.setAttribute('aria-pressed', String(u === 'km'));
+  unitBtns.mi.setAttribute('aria-pressed', String(u === 'mi'));
+  refresh();
+}
+unitBtns.km.addEventListener('click', () => setUnit('km'));
+unitBtns.mi.addEventListener('click', () => setUnit('mi'));
 
 const toast = document.getElementById('toast');
 let toastT = 0;

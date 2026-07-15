@@ -13,6 +13,8 @@ HTML file rendered with [Three.js](https://threejs.org) (loaded from CDN).
 - Battery health, usable capacity, max range, odometer and degradation-trend
   stat tiles computed from the data
 - Switch the x-axis between **odometer** and **time**
+- Distance unit toggle — **km (default) or mi** — converting from whichever
+  unit the CSV was exported in
 - Dashed trend projection based on the most recent half of the mileage span
 - Hover any reading for date, health %, capacity, range and odometer
 - Flat front-on chart with pointer parallax; the third dimension is reserved
