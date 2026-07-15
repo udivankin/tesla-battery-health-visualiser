@@ -39,6 +39,11 @@
     will-change: transform;
   }
   .axis-label.proj { color: var(--text-muted); font-style: italic; opacity: 0.9; }
+  .axis-label.ann {
+    color: var(--text-secondary); font-weight: 550;
+    text-shadow: 0 1px 10px rgba(0,0,0,0.9);
+    transition: opacity .35s;
+  }
 
   /* ---------- HUD ---------- */
   #hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
@@ -182,8 +187,6 @@
     <div class="tiles" id="tiles"></div>
     <div class="hint">
       <span>Drag &amp; drop a Tessie battery CSV anywhere</span>
-      <span>Drag to orbit</span>
-      <span>Scroll to zoom</span>
       <span>Hover points for detail</span>
     </div>
   </div>
@@ -501,7 +504,6 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -622,7 +624,7 @@ scene.fog = new THREE.Fog(C.bg, 110, 260);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
 const CAM_TARGET = new THREE.Vector3(LEN / 2, HEIGHT * 0.38, 0);
-const CAM_DIR = new THREE.Vector3(0.05, 0.23, 0.97).normalize();
+const CAM_DIR = new THREE.Vector3(0.08, 0.26, 0.96).normalize();
 const CAM_FROM = new THREE.Vector3();
 const CAM_TO = new THREE.Vector3();
 function fitCamera() {
@@ -633,16 +635,6 @@ function fitCamera() {
   CAM_FROM.copy(CAM_TARGET).addScaledVector(CAM_DIR, dist * 1.5).add(new THREE.Vector3(30, 42, 0));
 }
 
-const controls = new OrbitControls(camera, canvas);
-controls.target.copy(CAM_TARGET);
-controls.enableDamping = true;
-controls.dampingFactor = 0.06;
-controls.minDistance = 24;
-controls.maxDistance = 190;
-controls.maxPolarAngle = Math.PI * 0.55;
-controls.enabled = false;
-let userInteracted = false;
-controls.addEventListener('start', () => { userInteracted = true; });
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -851,9 +843,40 @@ function buildChart(rows, unit, stats, mode) {
   addLabel(`${stats.healthPct.toFixed(1)}%`, endP.clone().add(new THREE.Vector3(0, 1.9, 0)), '');
   worldLabels[worldLabels.length - 1].el.style.cssText = 'color:var(--text-primary);font-weight:640;font-size:14px;';
 
-  // peak label
+  /* ----- 3D annotations: peak & outliers lift out of the chart plane ----- */
+  const annotations = [];
+  function annotate(point, text, lift, main) {
+    const top = point.clone().setZ(lift);
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([point, top]),
+      new THREE.LineBasicMaterial({ color: C.seriesLight, transparent: true, opacity: 0.4 }));
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(main ? 0.22 : 0.16, 12, 8),
+      new THREE.MeshBasicMaterial({ color: main ? C.end : C.seriesLight, toneMapped: false }));
+    dot.position.copy(top);
+    line.visible = dot.visible = false;
+    group.add(line, dot);
+    addLabel(text, top.clone().add(new THREE.Vector3(0, 1.0, 0)), 'ann', '-50%,-100%');
+    const el = worldLabels[worldLabels.length - 1].el;
+    el.style.opacity = '0';
+    annotations.push({ u: point.x / LEN, objs: [line, dot], el });
+  }
+
   const peakIdx = stats.smooth.indexOf(Math.max(...stats.smooth));
-  addLabel(`peak ${fmt1.format(stats.baseline)} kWh`, pts[peakIdx].clone().add(new THREE.Vector3(1.5, 2.4, 0)), '', '0%,-50%');
+  annotate(pts[peakIdx], `peak ${fmt1.format(stats.baseline)} kWh`, 7, true);
+
+  // outliers = raw readings furthest off the smoothed curve
+  const residuals = rows.map((r, i) => r.cap - stats.smooth[i]);
+  const sd = Math.sqrt(residuals.reduce((s, v) => s + v * v, 0) / residuals.length);
+  const thresh = Math.max(0.3, 2.4 * sd);
+  const order = residuals.map((_, i) => i).sort((a, b) => Math.abs(residuals[b]) - Math.abs(residuals[a]));
+  const picked = [];
+  for (const i of order) {
+    if (Math.abs(residuals[i]) < thresh || picked.length >= 3) break;
+    if ([peakIdx, ...picked].some(j => Math.abs(dotPts[i].x - dotPts[j].x) < LEN * 0.11)) continue;
+    picked.push(i);
+    annotate(dotPts[i],
+      `${residuals[i] > 0 ? '+' : '−'}${fmt1.format(Math.abs(residuals[i]))} kWh outlier`, 5, false);
+  }
 
   // hover highlight
   const hover = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10),
@@ -863,7 +886,7 @@ function buildChart(rows, unit, stats, mode) {
 
   scene.add(group);
   state = {
-    rows, unit, stats, mode, group, tube, curtainMat, dots, dotPts, endDot, halo, hover,
+    rows, unit, stats, mode, group, tube, curtainMat, dots, dotPts, endDot, halo, hover, annotations,
     idxTotal: tubeGeo.index.count,
     dotU: rows.map((r) => (X(xOf(r))) / LEN),
     endU: X(xOf(last)) / LEN,
@@ -925,6 +948,7 @@ function renderStats(rows, unit, stats, vin) {
 
 const tooltip = document.getElementById('tooltip');
 const ptr = { x: -1e4, y: -1e4, inside: false };
+const parallax = { x: 0, y: 0 };
 canvas.addEventListener('pointermove', (e) => { ptr.x = e.clientX; ptr.y = e.clientY; ptr.inside = true; });
 canvas.addEventListener('pointerleave', () => { ptr.inside = false; });
 
@@ -971,18 +995,18 @@ function animate() {
     const k = Math.min(1, t / INTRO_S);
     camera.position.lerpVectors(CAM_FROM, CAM_TO, easeOutCubic(k));
     camera.lookAt(CAM_TARGET);
-    if (k >= 1) {
-      introDone = true;
-      controls.enabled = true;
-    }
+    if (k >= 1) introDone = true;
   }
 
-  // gentle idle sway until the user grabs the scene
-  if (introDone && !userInteracted) {
-    const a = Math.sin(t * 0.22) * 0.045;
-    const off = CAM_TO.clone().sub(CAM_TARGET).applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
-    camera.position.copy(CAM_TARGET).add(off);
-    camera.position.y += Math.sin(t * 0.13) * 0.7;
+  // flat front view: gentle drift + pointer parallax, no orbiting
+  if (introDone) {
+    const nx = ptr.inside ? (ptr.x / window.innerWidth - 0.5) * 2 : 0;
+    const ny = ptr.inside ? (ptr.y / window.innerHeight - 0.5) * 2 : 0;
+    parallax.x += (nx - parallax.x) * 0.035;
+    parallax.y += (ny - parallax.y) * 0.035;
+    camera.position.copy(CAM_TO);
+    camera.position.x += Math.sin(t * 0.16) * 0.8 + parallax.x * 2.6;
+    camera.position.y += Math.sin(t * 0.11) * 0.5 - parallax.y * 1.6;
     camera.lookAt(CAM_TARGET);
   }
 
@@ -1005,6 +1029,11 @@ function animate() {
       const endOn = progress >= state.endU - 1e-3;
       state.endDot.visible = endOn;
       state.halo.visible = endOn;
+      for (const a of state.annotations) {
+        const on = progress >= a.u;
+        a.objs.forEach(o => { o.visible = on; });
+        a.el.style.opacity = on ? '1' : '0';
+      }
     }
     // pulse
     const s = 1 + Math.sin(t * 2.2) * 0.5 + 0.5;
@@ -1012,7 +1041,6 @@ function animate() {
     state.halo.material.opacity = 0.28 - s * 0.16;
   }
 
-  if (introDone && userInteracted) controls.update();
   composer.render();
 
   // project HTML labels

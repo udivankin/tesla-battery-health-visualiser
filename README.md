@@ -15,7 +15,8 @@ HTML file rendered with [Three.js](https://threejs.org) (loaded from CDN).
 - Switch the x-axis between **odometer** and **time**
 - Dashed trend projection based on the most recent half of the mileage span
 - Hover any reading for date, health %, capacity, range and odometer
-- Orbit / zoom the scene (subtle idle camera sway until you grab it)
+- Flat front-on chart with pointer parallax; the third dimension is reserved
+  for annotation pins that lift the peak and outlier readings off the plane
 - **Drag & drop your own Tessie CSV** (or use the Load CSV button) — everything
   recomputes client-side; no data leaves your browser
 
