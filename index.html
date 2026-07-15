@@ -576,11 +576,17 @@ function analyse(rows) {
   const ranges = rows.map(r => r.range).filter(v => isFinite(v) && v > 0);
   const rangeSmooth = movingAvg(rows.map(r => (isFinite(r.range) && r.range > 0) ? r.range : NaN)
     .map((v, i, a) => isFinite(v) ? v : a[i - 1] ?? ranges[0]), 9);
-  // trend over the most recent half of the mileage span (steadier than the early break-in drop)
+  // trend over the most recent half of the span (steadier than the early break-in drop)
   const midOdo = first.odo + (last.odo - first.odo) / 2;
   const recentIdx = rows.map((r, i) => i).filter(i => rows[i].odo >= midOdo);
   const reg = linreg(recentIdx.map(i => rows[i].odo), recentIdx.map(i => smooth[i]));
   const regAll = linreg(rows.map(r => r.odo), smooth);
+  // same regressions against time, in years
+  const years = rows.map(r => +r.date / (1000 * 3600 * 24 * 365.25));
+  const midT = years[0] + (years[years.length - 1] - years[0]) / 2;
+  const recentTIdx = rows.map((r, i) => i).filter(i => years[i] >= midT);
+  const regT = linreg(recentTIdx.map(i => years[i]), recentTIdx.map(i => smooth[i]));
+  const regTAll = linreg(years, smooth);
   return {
     smooth, baseline, current,
     healthPct: current / baseline * 100,
@@ -591,6 +597,8 @@ function analyse(rows) {
     monthsTracked: (last.date - first.date) / (1000 * 3600 * 24 * 30.44),
     trendRecent: reg.b * 10000,       // kWh per 10k distance units, recent half
     trendAll: regAll.b * 10000,
+    trendRecentYr: regT.b,            // kWh per year, recent half
+    trendAllYr: regTAll.b,
     reg,
   };
 }
@@ -909,7 +917,7 @@ function deltaSpan(v, unitStr, invertGood = false) {
   return `<span class="${cls}">${sign}${fmt1.format(Math.abs(v))}${unitStr}</span>`;
 }
 
-function renderStats(rows, unit, stats, vin) {
+function renderStats(rows, unit, stats, vin, mode) {
   const last = rows[rows.length - 1];
   document.getElementById('vin').textContent = vin || 'Tessie export';
   document.getElementById('range-note').textContent =
@@ -935,7 +943,11 @@ function renderStats(rows, unit, stats, vin) {
       value: `${fmtInt.format(Math.round(last.odo))}<small>${unit}</small>`,
       delta: `${kFmt(Math.round(stats.milesTracked))} ${unit} over ${Math.round(stats.monthsTracked)} mo tracked`,
     },
-    {
+    mode === 'time' ? {
+      label: 'Degradation trend',
+      value: `${fmt1.format(Math.abs(stats.trendRecentYr))}<small>kWh / yr</small>`,
+      delta: `recent · ${fmt1.format(Math.abs(stats.trendAllYr))} kWh/yr overall`,
+    } : {
       label: 'Degradation trend',
       value: `${fmt1.format(Math.abs(stats.trendRecent))}<small>kWh / 10k ${unit}</small>`,
       delta: `recent · ${fmt1.format(Math.abs(stats.trendAll))} kWh/10k ${unit} overall`,
@@ -1071,7 +1083,7 @@ function refresh() {
   const rows = f === 1 ? native.rows
     : native.rows.map(r => ({ ...r, odo: r.odo * f, range: r.range * f }));
   const stats = analyse(rows);
-  renderStats(rows, dispUnit, stats, currentVin);
+  renderStats(rows, dispUnit, stats, currentVin, mode);
   buildChart(rows, dispUnit, stats, mode);
 }
 
